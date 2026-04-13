@@ -8,7 +8,8 @@ st.set_page_config(page_title="Monthly Seasonality Ranker", layout="wide")
 st.title("Monthly Seasonality Ranker")
 st.write(
     "Shows two ranked lists side by side for the current month and next month, "
-    "grouped by asset type with labels for every asset."
+    "grouped by asset type with labels for every asset. "
+    "Year counts are matched by only using years where both months have valid completed data."
 )
 
 # =========================================================
@@ -175,14 +176,23 @@ def monthly_return(prices: pd.Series, year: int, month: int):
         if month_start > prices.index[-1]:
             return None
 
+        if month_end > prices.index[-1]:
+            return None
+
         start_idx = prices.index.get_indexer([month_start], method="nearest")[0]
         end_idx = prices.index.get_indexer([month_end], method="nearest")[0]
+
+        if start_idx == -1 or end_idx == -1:
+            return None
 
         if end_idx <= start_idx:
             return None
 
         start_price = float(prices.iloc[start_idx])
         end_price = float(prices.iloc[end_idx])
+
+        if start_price == 0:
+            return None
 
         return (end_price - start_price) / start_price * 100.0
 
@@ -213,32 +223,28 @@ def analyze_ticker(
     current_month_returns = []
     next_month_returns = []
 
+    # Only count years where BOTH months have valid completed data
     for year in range(start_year, end_year + 1):
         r_current = monthly_return(prices, year, current_month)
-        if r_current is not None:
-            current_month_returns.append(float(r_current))
-
         r_next = monthly_return(prices, year, next_month)
-        if r_next is not None:
+
+        if r_current is not None and r_next is not None:
+            current_month_returns.append(float(r_current))
             next_month_returns.append(float(r_next))
 
-    current_avg = None
-    current_win_rate = None
-    next_avg = None
-    next_win_rate = None
+    matched_years = len(current_month_returns)
 
-    if len(current_month_returns) >= min_years_required:
-        current_series = pd.Series(current_month_returns, dtype=float)
-        current_avg = float(current_series.mean())
-        current_win_rate = float((current_series > 0).mean() * 100)
-
-    if len(next_month_returns) >= min_years_required:
-        next_series = pd.Series(next_month_returns, dtype=float)
-        next_avg = float(next_series.mean())
-        next_win_rate = float((next_series > 0).mean() * 100)
-
-    if current_avg is None and next_avg is None:
+    if matched_years < min_years_required:
         return None
+
+    current_series = pd.Series(current_month_returns, dtype=float)
+    next_series = pd.Series(next_month_returns, dtype=float)
+
+    current_avg = float(current_series.mean())
+    current_win_rate = float((current_series > 0).mean() * 100)
+
+    next_avg = float(next_series.mean())
+    next_win_rate = float((next_series > 0).mean() * 100)
 
     return {
         "Ticker": symbol,
@@ -246,10 +252,10 @@ def analyze_ticker(
         "Asset Type": TICKER_INFO[symbol]["Asset Type"],
         "This Month Avg %": current_avg,
         "This Month Win Rate %": current_win_rate,
-        "This Month Years": len(current_month_returns),
+        "This Month Years": matched_years,
         "Next Month Avg %": next_avg,
         "Next Month Win Rate %": next_win_rate,
-        "Next Month Years": len(next_month_returns),
+        "Next Month Years": matched_years,
     }
 
 
