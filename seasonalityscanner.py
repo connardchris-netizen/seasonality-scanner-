@@ -26,6 +26,7 @@ ASSET_GROUPS = {
         "EURGBP=X": "EUR/GBP",
         "EURCHF=X": "EUR/CHF",
         "AUDJPY=X": "AUD/JPY",
+        "DX-Y.NYB": "US Dollar Index (DXY)",
     },
     "Commodities": {
         "GC=F": "Gold",
@@ -63,7 +64,6 @@ ASSET_GROUPS = {
     },
     "Rates": {
         "^TNX": "US 10Y Yield",
-        "DX-Y.NYB": "Dollar Index",
     },
 }
 
@@ -226,14 +226,13 @@ def show_grouped_tables(source_df: pd.DataFrame, group_order: list[str], avg_col
 
         st.markdown(f"### {group_name}")
         st.dataframe(
-            format_table(
-                group_df[["Ticker", "Label", avg_col, win_col, years_col]],
-                avg_col,
-                win_col
-            ),
+            group_df[["Ticker", "Label", avg_col, win_col, years_col]].style.format({
+                avg_col: "{:.2f}",
+                win_col: "{:.1f}",
+            }),
             use_container_width=True
         )
-
+        
 # =========================================================
 # Main
 # =========================================================
