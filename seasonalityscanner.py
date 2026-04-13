@@ -6,10 +6,13 @@ from datetime import datetime
 st.set_page_config(page_title="Monthly Seasonality Ranker", layout="wide")
 
 st.title("Monthly Seasonality Ranker")
-st.write("Ranked by historical average return for this month and next month, grouped by asset type.")
+st.write(
+    "Shows two ranked lists side by side for the current month and next month, "
+    "grouped by asset type with labels for every asset."
+)
 
 # =========================================================
-# Asset groups from your list
+# Asset groups
 # =========================================================
 
 ASSET_GROUPS = {
@@ -67,7 +70,21 @@ ASSET_GROUPS = {
     },
 }
 
-# Flatten for easy lookup
+MONTH_NAMES = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
+}
+
 TICKER_INFO = {}
 for asset_type, mapping in ASSET_GROUPS.items():
     for ticker, label in mapping.items():
@@ -82,21 +99,33 @@ ALL_TICKERS = list(TICKER_INFO.keys())
 st.sidebar.header("Settings")
 
 start_year = st.sidebar.number_input(
-    "Start Year", min_value=1900, max_value=2100, value=2010, step=1
+    "Start Year",
+    min_value=1900,
+    max_value=2100,
+    value=2010,
+    step=1,
 )
 
 end_year = st.sidebar.number_input(
-    "End Year", min_value=1900, max_value=2100, value=2025, step=1
+    "End Year",
+    min_value=1900,
+    max_value=2100,
+    value=datetime.today().year,
+    step=1,
 )
 
 min_years = st.sidebar.number_input(
-    "Minimum years of data", min_value=1, max_value=50, value=5, step=1
+    "Minimum years of data",
+    min_value=1,
+    max_value=50,
+    value=5,
+    step=1,
 )
 
 selected_groups = st.sidebar.multiselect(
     "Asset Groups",
     options=list(ASSET_GROUPS.keys()),
-    default=list(ASSET_GROUPS.keys())
+    default=list(ASSET_GROUPS.keys()),
 )
 
 run = st.sidebar.button("Run Scan")
@@ -106,8 +135,15 @@ run = st.sidebar.button("Run Scan")
 # =========================================================
 
 @st.cache_data(show_spinner=False)
-def download_data(symbol: str, start: str, end: str):
-    return yf.download(symbol, start=start, end=end, auto_adjust=True, progress=False)
+def download_data(symbol: str, start: str, end: str) -> pd.DataFrame:
+    return yf.download(
+        symbol,
+        start=start,
+        end=end,
+        auto_adjust=True,
+        progress=False,
+    )
+
 
 def get_close_series(df: pd.DataFrame) -> pd.Series:
     if df.empty:
@@ -118,12 +154,12 @@ def get_close_series(df: pd.DataFrame) -> pd.Series:
 
     prices = df["Close"]
 
-    # yfinance can sometimes return a DataFrame here
     if isinstance(prices, pd.DataFrame):
         prices = prices.iloc[:, 0]
 
     prices = pd.to_numeric(prices, errors="coerce").dropna()
     return prices
+
 
 def monthly_return(prices: pd.Series, year: int, month: int):
     try:
@@ -153,7 +189,15 @@ def monthly_return(prices: pd.Series, year: int, month: int):
     except Exception:
         return None
 
-def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: int, next_month: int, min_years: int):
+
+def analyze_ticker(
+    symbol: str,
+    start_year: int,
+    end_year: int,
+    current_month: int,
+    next_month: int,
+    min_years_required: int,
+):
     download_start = f"{start_year}-01-01"
     download_end = f"{end_year}-12-31"
 
@@ -170,28 +214,28 @@ def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: i
     next_month_returns = []
 
     for year in range(start_year, end_year + 1):
-        r1 = monthly_return(prices, year, current_month)
-        if r1 is not None:
-            current_month_returns.append(r1)
+        r_current = monthly_return(prices, year, current_month)
+        if r_current is not None:
+            current_month_returns.append(float(r_current))
 
-        r2 = monthly_return(prices, year, next_month)
-        if r2 is not None:
-            next_month_returns.append(r2)
+        r_next = monthly_return(prices, year, next_month)
+        if r_next is not None:
+            next_month_returns.append(float(r_next))
 
     current_avg = None
     current_win_rate = None
     next_avg = None
     next_win_rate = None
 
-    if len(current_month_returns) >= min_years:
-        cur = pd.Series(current_month_returns, dtype=float)
-        current_avg = cur.mean()
-        current_win_rate = (cur > 0).mean() * 100
+    if len(current_month_returns) >= min_years_required:
+        current_series = pd.Series(current_month_returns, dtype=float)
+        current_avg = float(current_series.mean())
+        current_win_rate = float((current_series > 0).mean() * 100)
 
-    if len(next_month_returns) >= min_years:
-        nxt = pd.Series(next_month_returns, dtype=float)
-        next_avg = nxt.mean()
-        next_win_rate = (nxt > 0).mean() * 100
+    if len(next_month_returns) >= min_years_required:
+        next_series = pd.Series(next_month_returns, dtype=float)
+        next_avg = float(next_series.mean())
+        next_win_rate = float((next_series > 0).mean() * 100)
 
     if current_avg is None and next_avg is None:
         return None
@@ -208,13 +252,14 @@ def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: i
         "Next Month Years": len(next_month_returns),
     }
 
-def format_table(df: pd.DataFrame, avg_col: str, win_col: str):
-    return df.style.format({
-        avg_col: "{:.2f}",
-        win_col: "{:.1f}",
-    })
 
-def show_grouped_tables(source_df: pd.DataFrame, group_order: list[str], avg_col: str, win_col: str, years_col: str):
+def display_grouped_table(
+    source_df: pd.DataFrame,
+    group_order: list[str],
+    avg_col: str,
+    win_col: str,
+    years_col: str,
+):
     for group_name in group_order:
         group_df = source_df[source_df["Asset Type"] == group_name].copy()
 
@@ -225,14 +270,18 @@ def show_grouped_tables(source_df: pd.DataFrame, group_order: list[str], avg_col
         group_df.index = group_df.index + 1
 
         st.markdown(f"### {group_name}")
-        st.dataframe(
-            group_df[["Ticker", "Label", avg_col, win_col, years_col]].style.format({
-                avg_col: "{:.2f}",
-                win_col: "{:.1f}",
-            }),
-            use_container_width=True
+
+        display_df = group_df[["Ticker", "Label", avg_col, win_col, years_col]].copy()
+        display_df[avg_col] = display_df[avg_col].map(
+            lambda x: f"{x:.2f}" if pd.notna(x) else ""
         )
-        
+        display_df[win_col] = display_df[win_col].map(
+            lambda x: f"{x:.1f}" if pd.notna(x) else ""
+        )
+
+        st.table(display_df)
+
+
 # =========================================================
 # Main
 # =========================================================
@@ -240,6 +289,10 @@ def show_grouped_tables(source_df: pd.DataFrame, group_order: list[str], avg_col
 if run:
     if not selected_groups:
         st.error("Select at least one asset group.")
+        st.stop()
+
+    if start_year > end_year:
+        st.error("Start Year must be less than or equal to End Year.")
         st.stop()
 
     tickers_to_scan = [
@@ -252,13 +305,9 @@ if run:
     current_month = today.month
     next_month = 1 if current_month == 12 else current_month + 1
 
-    month_names = {
-        1: "January", 2: "February", 3: "March", 4: "April",
-        5: "May", 6: "June", 7: "July", 8: "August",
-        9: "September", 10: "October", 11: "November", 12: "December"
-    }
-
-    st.subheader(f"{month_names[current_month]} and {month_names[next_month]} seasonal ranking")
+    st.subheader(
+        f"Seasonal ranking for {MONTH_NAMES[current_month]} and {MONTH_NAMES[next_month]}"
+    )
 
     results = []
     progress = st.progress(0)
@@ -274,52 +323,46 @@ if run:
             int(end_year),
             current_month,
             next_month,
-            int(min_years)
+            int(min_years),
         )
         if result is not None:
             results.append(result)
+
         progress.progress(i / total)
 
     status.empty()
     progress.empty()
 
     if not results:
-        st.warning("No valid results found.")
+        st.warning("No valid results found for the selected settings.")
         st.stop()
 
     results_df = pd.DataFrame(results)
 
-    this_month_df = (
-        results_df.dropna(subset=["This Month Avg %"])
-        .copy()
-    )
-
-    next_month_df = (
-        results_df.dropna(subset=["Next Month Avg %"])
-        .copy()
-    )
+    this_month_df = results_df.dropna(subset=["This Month Avg %"]).copy()
+    next_month_df = results_df.dropna(subset=["Next Month Avg %"]).copy()
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader(f"Ranked by {month_names[current_month]} Average Return")
-        show_grouped_tables(
+        st.subheader(f"Ranked by {MONTH_NAMES[current_month]} Average Return")
+        display_grouped_table(
             this_month_df,
             selected_groups,
             "This Month Avg %",
             "This Month Win Rate %",
-            "This Month Years"
+            "This Month Years",
         )
 
     with col2:
-        st.subheader(f"Ranked by {month_names[next_month]} Average Return")
-        show_grouped_tables(
+        st.subheader(f"Ranked by {MONTH_NAMES[next_month]} Average Return")
+        display_grouped_table(
             next_month_df,
             selected_groups,
             "Next Month Avg %",
             "Next Month Win Rate %",
-            "Next Month Years"
+            "Next Month Years",
         )
 
 else:
-    st.info("Choose asset groups and click 'Run Scan'.")
+    st.info("Choose your settings in the sidebar and click Run Scan.")
