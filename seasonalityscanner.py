@@ -6,67 +6,80 @@ from datetime import datetime
 st.set_page_config(page_title="Monthly Seasonality Ranker", layout="wide")
 
 st.title("Monthly Seasonality Ranker")
+st.write("Ranked by historical average return for this month and next month, grouped by asset type.")
 
-st.write("Ranks tickers by historical average return for this month and next month.")
+# =========================================================
+# Asset groups from your list
+# =========================================================
 
-# -----------------------------
+ASSET_GROUPS = {
+    "Forex": {
+        "EURUSD=X": "EUR/USD",
+        "JPY=X": "USD/JPY",
+        "GBPUSD=X": "GBP/USD",
+        "CHF=X": "USD/CHF",
+        "AUDUSD=X": "AUD/USD",
+        "CAD=X": "USD/CAD",
+        "NZDUSD=X": "NZD/USD",
+        "EURJPY=X": "EUR/JPY",
+        "GBPJPY=X": "GBP/JPY",
+        "EURGBP=X": "EUR/GBP",
+        "EURCHF=X": "EUR/CHF",
+        "AUDJPY=X": "AUD/JPY",
+    },
+    "Commodities": {
+        "GC=F": "Gold",
+        "SI=F": "Silver",
+        "CL=F": "WTI Crude Oil",
+        "BZ=F": "Brent Crude",
+        "NG=F": "Natural Gas",
+        "HG=F": "Copper",
+        "ZC=F": "Corn",
+        "ZW=F": "Wheat",
+        "ZS=F": "Soybeans",
+        "KC=F": "Coffee",
+        "SB=F": "Sugar",
+        "CT=F": "Cotton",
+    },
+    "Indices": {
+        "^GSPC": "S&P 500",
+        "^DJI": "Dow Jones",
+        "^IXIC": "Nasdaq Composite",
+        "^RUT": "Russell 2000",
+        "^VIX": "Volatility Index",
+        "^FTSE": "FTSE 100",
+        "^GDAXI": "DAX",
+        "^FCHI": "CAC 40",
+        "^N225": "Nikkei 225",
+        "^HSI": "Hang Seng",
+        "000001.SS": "Shanghai Composite",
+        "^AXJO": "ASX 200",
+        "^STOXX50E": "Euro Stoxx 50",
+        "^BVSP": "IBOVESPA",
+    },
+    "Crypto": {
+        "BTC-USD": "Bitcoin",
+        "ETH-USD": "Ethereum",
+    },
+    "Rates": {
+        "^TNX": "US 10Y Yield",
+        "DX-Y.NYB": "Dollar Index",
+    },
+}
+
+# Flatten for easy lookup
+TICKER_INFO = {}
+for asset_type, mapping in ASSET_GROUPS.items():
+    for ticker, label in mapping.items():
+        TICKER_INFO[ticker] = {"Asset Type": asset_type, "Label": label}
+
+ALL_TICKERS = list(TICKER_INFO.keys())
+
+# =========================================================
 # Sidebar
-# -----------------------------
+# =========================================================
+
 st.sidebar.header("Settings")
-
-default_tickers = """SPY
-QQQ
-IWM
-TLT
-^GSPC
-^DJI
-^IXIC
-^RUT
-^VIX
-^FTSE
-^GDAXI
-^FCHI
-^N225
-^HSI
-000001.SS
-^AXJO
-^STOXX50E
-^BVSP
-EURUSD=X
-USDJPY=X
-GBPUSD=X
-USDCHF=X
-AUDUSD=X
-USDCAD=X
-NZDUSD=X
-EURJPY=X
-GBPJPY=X
-EURGBP=X
-EURCHF=X
-AUDJPY=X
-GC=F
-SI=F
-CL=F
-BZ=F
-NG=F
-HG=F
-ZC=F
-ZW=F
-ZS=F
-KC=F
-SB=F
-CT=F
-BTC-USD
-ETH-USD
-^TNX
-DX-Y.NYB
-"""
-
-tickers_text = st.sidebar.text_area(
-    "Tickers (one per line)",
-    value=default_tickers,
-    height=250
-)
 
 start_year = st.sidebar.number_input(
     "Start Year", min_value=1900, max_value=2100, value=2010, step=1
@@ -80,26 +93,21 @@ min_years = st.sidebar.number_input(
     "Minimum years of data", min_value=1, max_value=50, value=5, step=1
 )
 
+selected_groups = st.sidebar.multiselect(
+    "Asset Groups",
+    options=list(ASSET_GROUPS.keys()),
+    default=list(ASSET_GROUPS.keys())
+)
+
 run = st.sidebar.button("Run Scan")
 
-# -----------------------------
+# =========================================================
 # Helpers
-# -----------------------------
-def parse_tickers(text: str) -> list[str]:
-    tickers = [line.strip().upper() for line in text.splitlines() if line.strip()]
-    seen = set()
-    result = []
-    for t in tickers:
-        if t not in seen:
-            seen.add(t)
-            result.append(t)
-    return result
-
+# =========================================================
 
 @st.cache_data(show_spinner=False)
 def download_data(symbol: str, start: str, end: str):
     return yf.download(symbol, start=start, end=end, auto_adjust=True, progress=False)
-
 
 def get_close_series(df: pd.DataFrame) -> pd.Series:
     if df.empty:
@@ -110,12 +118,12 @@ def get_close_series(df: pd.DataFrame) -> pd.Series:
 
     prices = df["Close"]
 
+    # yfinance can sometimes return a DataFrame here
     if isinstance(prices, pd.DataFrame):
         prices = prices.iloc[:, 0]
 
     prices = pd.to_numeric(prices, errors="coerce").dropna()
     return prices
-
 
 def monthly_return(prices: pd.Series, year: int, month: int):
     try:
@@ -145,8 +153,7 @@ def monthly_return(prices: pd.Series, year: int, month: int):
     except Exception:
         return None
 
-
-def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: int, next_month: int):
+def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: int, next_month: int, min_years: int):
     download_start = f"{start_year}-01-01"
     download_end = f"{end_year}-12-31"
 
@@ -172,8 +179,8 @@ def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: i
             next_month_returns.append(r2)
 
     current_avg = None
-    next_avg = None
     current_win_rate = None
+    next_avg = None
     next_win_rate = None
 
     if len(current_month_returns) >= min_years:
@@ -191,6 +198,8 @@ def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: i
 
     return {
         "Ticker": symbol,
+        "Label": TICKER_INFO[symbol]["Label"],
+        "Asset Type": TICKER_INFO[symbol]["Asset Type"],
         "This Month Avg %": current_avg,
         "This Month Win Rate %": current_win_rate,
         "This Month Years": len(current_month_returns),
@@ -199,16 +208,46 @@ def analyze_ticker(symbol: str, start_year: int, end_year: int, current_month: i
         "Next Month Years": len(next_month_returns),
     }
 
+def format_table(df: pd.DataFrame, avg_col: str, win_col: str):
+    return df.style.format({
+        avg_col: "{:.2f}",
+        win_col: "{:.1f}",
+    })
 
-# -----------------------------
+def show_grouped_tables(source_df: pd.DataFrame, group_order: list[str], avg_col: str, win_col: str, years_col: str):
+    for group_name in group_order:
+        group_df = source_df[source_df["Asset Type"] == group_name].copy()
+
+        if group_df.empty:
+            continue
+
+        group_df = group_df.sort_values(avg_col, ascending=False).reset_index(drop=True)
+        group_df.index = group_df.index + 1
+
+        st.markdown(f"### {group_name}")
+        st.dataframe(
+            format_table(
+                group_df[["Ticker", "Label", avg_col, win_col, years_col]],
+                avg_col,
+                win_col
+            ),
+            use_container_width=True
+        )
+
+# =========================================================
 # Main
-# -----------------------------
-if run:
-    tickers = parse_tickers(tickers_text)
+# =========================================================
 
-    if not tickers:
-        st.error("Please enter at least one ticker.")
+if run:
+    if not selected_groups:
+        st.error("Select at least one asset group.")
         st.stop()
+
+    tickers_to_scan = [
+        ticker
+        for ticker in ALL_TICKERS
+        if TICKER_INFO[ticker]["Asset Type"] in selected_groups
+    ]
 
     today = datetime.today()
     current_month = today.month
@@ -220,18 +259,24 @@ if run:
         9: "September", 10: "October", 11: "November", 12: "December"
     }
 
-    st.subheader(f"This Month: {month_names[current_month]}")
-    st.subheader(f"Next Month: {month_names[next_month]}")
+    st.subheader(f"{month_names[current_month]} and {month_names[next_month]} seasonal ranking")
 
     results = []
     progress = st.progress(0)
     status = st.empty()
 
-    total = len(tickers)
+    total = len(tickers_to_scan)
 
-    for i, ticker in enumerate(tickers, start=1):
+    for i, ticker in enumerate(tickers_to_scan, start=1):
         status.text(f"Processing {ticker} ({i}/{total})")
-        result = analyze_ticker(ticker, int(start_year), int(end_year), current_month, next_month)
+        result = analyze_ticker(
+            ticker,
+            int(start_year),
+            int(end_year),
+            current_month,
+            next_month,
+            int(min_years)
+        )
         if result is not None:
             results.append(result)
         progress.progress(i / total)
@@ -247,39 +292,35 @@ if run:
 
     this_month_df = (
         results_df.dropna(subset=["This Month Avg %"])
-        .sort_values("This Month Avg %", ascending=False)
-        [["Ticker", "This Month Avg %", "This Month Win Rate %", "This Month Years"]]
-        .reset_index(drop=True)
+        .copy()
     )
 
     next_month_df = (
         results_df.dropna(subset=["Next Month Avg %"])
-        .sort_values("Next Month Avg %", ascending=False)
-        [["Ticker", "Next Month Avg %", "Next Month Win Rate %", "Next Month Years"]]
-        .reset_index(drop=True)
+        .copy()
     )
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.subheader(f"Ranked by {month_names[current_month]} Average Return")
-        st.dataframe(
-            this_month_df.style.format({
-                "This Month Avg %": "{:.2f}",
-                "This Month Win Rate %": "{:.1f}"
-            }),
-            use_container_width=True
+        show_grouped_tables(
+            this_month_df,
+            selected_groups,
+            "This Month Avg %",
+            "This Month Win Rate %",
+            "This Month Years"
         )
 
     with col2:
         st.subheader(f"Ranked by {month_names[next_month]} Average Return")
-        st.dataframe(
-            next_month_df.style.format({
-                "Next Month Avg %": "{:.2f}",
-                "Next Month Win Rate %": "{:.1f}"
-            }),
-            use_container_width=True
+        show_grouped_tables(
+            next_month_df,
+            selected_groups,
+            "Next Month Avg %",
+            "Next Month Win Rate %",
+            "Next Month Years"
         )
 
 else:
-    st.info("Enter your tickers and click 'Run Scan'.")
+    st.info("Choose asset groups and click 'Run Scan'.")
